@@ -14,6 +14,14 @@ Use the provided tools to retain any necessary memories about the user.
 Use parallel tool calling to handle updates and insertions simultaneously.
 System Time: {time}"""
 
+CREATE_INSTRUCTIONS = """Reflect on the following interaction between a user and Mizan, an Egyptian legal assistant.
+Based on this interaction, update the behavioral instructions for how Mizan should respond to this user.
+Consider: response language, length preference, citation style, formality level, and any explicit feedback.
+Your current instructions are:
+<current_instructions>
+{current_instructions}
+</current_instructions>"""
+
 # Load environment variables
 load_dotenv()
 #model/memory.py
@@ -27,11 +35,21 @@ class UserProfile(BaseModel):
     preferred_language: Optional[str] = Field(None, description="The user's preferred_language")
     last_topic: Optional[str] = Field(None, description="The user's last_topic")
 
+class MizanInstructions(BaseModel):
+    """Behavioral instructions for how Mizan should respond to this user."""
+    instructions: str = Field(
+        description="a string that contains all the behavioral rules accumulated over time" 
+    )
 # Create the Trustcall extractor
 profile_extractor = create_extractor(
     model,           # the LLM to use for extraction
     tools=[UserProfile],   # the data structure we want to extract into
     tool_choice='UserProfile' # the name of the tool to use for extraction
+)
+instructions_extractor = create_extractor(
+    model,
+    tools=[MizanInstructions],
+    tool_choice='MizanInstructions'
 )
 
 def load_profile(state, config: RunnableConfig, *, store: BaseStore):
@@ -51,33 +69,47 @@ def load_profile(state, config: RunnableConfig, *, store: BaseStore):
     return {"user_profile": profile}
 
 def save_profile(state, config: RunnableConfig, *, store: BaseStore):
-    # 1. get user_id from config
     user_id = config["configurable"]["user_id"]
 
-    # 2. define the namespace — same as load_profile
-    namespace = ("UserProfile", user_id)
-
-    # 3. get existing profile to pass to Trustcall
-    existing_items = store.search(namespace)
+    # --- Save User Profile ---
+    namespace_profile = ("UserProfile", user_id)
+    existing_items = store.search(namespace_profile)
     existing = {item.key: item.value for item in existing_items}
-    
-    # 4. get the conversation to extract from
-    # hint: what's in state that has the query and answer?
-    messages = [
+
+    messages_profile = [
         SystemMessage(content=TRUSTCALL_INSTRUCTION.format(time=datetime.now().isoformat())),
         HumanMessage(content=f"Query: {state['query']}"),
         HumanMessage(content=f"Answer given: {state.get('answer', '')}")
     ]
-    
-    # 5. invoke Trustcall — fill in the two inputs
+
     result = profile_extractor.invoke({
-        "messages": messages,
+        "messages": messages_profile,
         "existing": existing
     })
-    
-    # 6. save each result back to store
+
     for r, rmeta in zip(result["responses"], result["response_metadata"]):
-        store.put(namespace,
-              rmeta.get("json_doc_id", str(uuid.uuid4())),
-              r.model_dump(mode="json"),
-    )
+        store.put(namespace_profile,
+                  rmeta.get("json_doc_id", str(uuid.uuid4())),
+                  r.model_dump(mode="json"))
+
+    # --- Save Instructions ---
+    namespace_instructions = ("MizanInstructions", user_id)
+    current_inst_items = store.search(namespace_instructions)
+    existing_inst = {item.key: item.value for item in current_inst_items}
+    current_instructions = current_inst_items[0].value.get("instructions", "No instructions yet.") if current_inst_items else "No instructions yet."
+
+    messages_inst = [
+        SystemMessage(content=CREATE_INSTRUCTIONS.format(current_instructions=current_instructions)),
+        HumanMessage(content=f"Query: {state['query']}"),
+        HumanMessage(content=f"Answer given: {state.get('answer', '')}")
+    ]
+
+    result_inst = instructions_extractor.invoke({
+        "messages": messages_inst,
+        "existing": existing_inst
+    })
+
+    for r, rmeta in zip(result_inst["responses"], result_inst["response_metadata"]):
+        store.put(namespace_instructions,
+                  rmeta.get("json_doc_id", str(uuid.uuid4())),
+                  r.model_dump(mode="json"))
