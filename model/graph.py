@@ -40,6 +40,7 @@ class MizanState(TypedDict):
     attempts: int       # retry counter — safety brake
     language: str       # detected language of the query (e.g., "ar" or "en")
     user_profile: Optional[dict]  # extracted user profile info (name, profession, etc.)
+    user_instructions: Optional[str]  # personalized instructions for Mizan based on user profile
 
 # --- Node Implementations ---
 def detect_language(text: str) -> str:
@@ -143,11 +144,15 @@ def generate_node(state: MizanState):
     # Combine retrieved chunks into one context block
     context = "\n\n".join(retrieved_docs)
     
+    user_instructions = state.get("user_instructions", "")
+
     system_prompt = f"""You are Mizan, an expert legal assistant specializing in Egyptian law.
-Your job is to answer questions about Egyptian laws clearly and accurately.
-Use ONLY the provided context to answer. Do not make up information.
-Always cite the source of your answer.
-Respond in {"Arabic" if language == "ar" else "English"}."""
+    Your job is to answer questions about Egyptian laws clearly and accurately.
+    Use ONLY the provided context to answer. Do not make up information.
+    Always cite the source of your answer.
+    Respond in {"Arabic" if language == "ar" else "English"}.
+
+    {f"User preferences: {user_instructions}" if user_instructions else ""}"""
 
     result = llm.invoke([
         SystemMessage(content=system_prompt),

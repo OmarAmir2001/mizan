@@ -55,6 +55,9 @@ instructions_extractor = create_extractor(
 def load_profile(state, config: RunnableConfig, *, store: BaseStore):
     # 1. get user_id from config
     user_id = config["configurable"]["user_id"]
+    # load instructions
+    inst_items = store.search(("MizanInstructions", user_id))
+    instructions = inst_items[0].value.get("instructions", "") if inst_items else ""
 
     # 2. define the namespace
     namespace = ("UserProfile", user_id)
@@ -66,7 +69,7 @@ def load_profile(state, config: RunnableConfig, *, store: BaseStore):
     profile = memories[0].value if memories else None
     
     # 5. return it so other nodes can use it
-    return {"user_profile": profile}
+    return {"user_profile": profile, "user_instructions": instructions}
 
 def save_profile(state, config: RunnableConfig, *, store: BaseStore):
     user_id = config["configurable"]["user_id"]
