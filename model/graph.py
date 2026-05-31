@@ -10,7 +10,7 @@ from langchain_core.messages import SystemMessage, HumanMessage
 from langgraph.graph import END, StateGraph, START
 from sentence_transformers import SentenceTransformer
 from langgraph.checkpoint.sqlite import SqliteSaver
-from langgraph.store.memory import InMemoryStore
+from langgraph.store.sqlite import SqliteStore
 from memory import load_profile, save_profile
 
 # Load environment variables
@@ -135,24 +135,24 @@ Return a more detailed and precise version of the question."""
     }
 
 def generate_node(state: MizanState):
-    ''' Generates an answer based on the retrieved documents. '''
     query = state["query"]
     retrieved_docs = state["retrieved_docs"]
     sources = state["sources"]
-    language = state.get("language", "ar")  # default to Arabic
-    
-    # Combine retrieved chunks into one context block
+    language = state.get("language", "ar")
     context = "\n\n".join(retrieved_docs)
-    
     user_instructions = state.get("user_instructions", "")
+    user_profile = state.get("user_profile")  # add this
 
     system_prompt = f"""You are Mizan, an expert legal assistant specializing in Egyptian law.
-    Your job is to answer questions about Egyptian laws clearly and accurately.
-    Use ONLY the provided context to answer. Do not make up information.
-    Always cite the source of your answer.
-    Respond in {"Arabic" if language == "ar" else "English"}.
+Your job is to answer questions about Egyptian laws clearly and accurately.
+Use ONLY the provided context to answer legal questions. Do not make up information.
+Always cite the source of your answer.
+Respond in {"Arabic" if language == "ar" else "English"}.
 
-    {f"User preferences: {user_instructions}" if user_instructions else ""}"""
+{f"User profile: {user_profile}" if user_profile else ""}
+{f"User preferences: {user_instructions}" if user_instructions else ""}
+
+If the user asks about themselves (name, profession, etc.), answer from the user profile above, not from the legal context."""
 
     result = llm.invoke([
         SystemMessage(content=system_prompt),
@@ -185,23 +185,24 @@ mizan_graph.add_edge('rewrite', 'retrieve')
 mizan_graph.add_edge('generate', 'save_profile')
 mizan_graph.add_edge('save_profile', END)
 
+# Checkpointer — for short term memory
 conn = sqlite3.connect("./mizan_memory.db", check_same_thread=False)
 memory = SqliteSaver(conn)
-in_memory_store = InMemoryStore()
 
-graph = mizan_graph.compile(
-    checkpointer=memory,
-    store=in_memory_store
-)
+# Store — for long term memory  
+with SqliteStore.from_conn_string("./mizan_store.db") as store:
+    graph = mizan_graph.compile(
+        checkpointer=memory,
+        store=store
+    )
 
-
-for chunk in graph.stream(
-    {"query": "hi my name is omar what are my working rights as an 18 year old?", "attempts": 0},
-    config={"configurable": {"thread_id": "1", "user_id": "user_001"}},
-    stream_mode="updates"
-):
-    node_name = next(iter(chunk.keys()))
-    print(f"\n-- Node: {node_name} --")
-    node_data = chunk.get(node_name) or {}
-    if "answer" in node_data:
-        print(node_data["answer"])
+    for chunk in graph.stream(
+        {"query": "what was my job?", "attempts": 0},
+        config={"configurable": {"thread_id": "4", "user_id": "user_001"}},
+        stream_mode="updates"
+    ):
+        node_name = next(iter(chunk.keys()))
+        print(f"\n-- Node: {node_name} --")
+        node_data = chunk.get(node_name) or {}
+        if "answer" in node_data:
+            print(node_data["answer"])
