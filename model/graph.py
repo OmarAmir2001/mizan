@@ -4,11 +4,14 @@ from pydantic import BaseModel
 from typing_extensions import TypedDict
 from dotenv import load_dotenv
 from langchain_groq import ChatGroq
+from typing import Optional
 from chromadb import PersistentClient
 from langchain_core.messages import SystemMessage, HumanMessage
 from langgraph.graph import END, StateGraph, START
 from sentence_transformers import SentenceTransformer
 from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.store.memory import InMemoryStore
+from memory import load_profile, save_profile
 
 # Load environment variables
 load_dotenv()
@@ -17,14 +20,16 @@ llm = ChatGroq(model="llama-3.3-70b-versatile")
 embed_model = SentenceTransformer("intfloat/multilingual-e5-large")
 # --- State Definitions ---
 
+# This is the structured output format for the rewrite node
 class RewrittenQuery(BaseModel):
     rewritten_query: str
 
+# This is the structured output format for the MizanAnswer node
 class MizanAnswer(BaseModel):
     answer: str
     sources: List[str]
     confidence: str  # "high", "medium", "low"
-    
+# This is the main state object that flows through the graph  
 class MizanState(TypedDict):
     query: str          # original question
     rewritten_query: str  # improved query after grading fails
@@ -33,7 +38,8 @@ class MizanState(TypedDict):
     answer: str         # final output
     sources: List[str]  # where each chunk came from
     attempts: int       # retry counter — safety brake
-    language: str 
+    language: str       # detected language of the query (e.g., "ar" or "en")
+    user_profile: Optional[dict]  # extracted user profile info (name, profession, etc.)
 
 # --- Node Implementations ---
 def detect_language(text: str) -> str:
@@ -106,6 +112,7 @@ def route_after_grading(state: MizanState):
     return "rewrite"
 
 def rewrite_node(state: MizanState):
+    print("--- REWRITING QUERY ---")
     
     query = state["query"]
     attempts = state.get("attempts", 0)
@@ -114,23 +121,16 @@ def rewrite_node(state: MizanState):
 to be more specific and effective for searching Egyptian legal documents.
 Return a more detailed and precise version of the question."""
     
-    structured_llm = llm.with_structured_output(MizanAnswer)
-
+    structured_llm = llm.with_structured_output(RewrittenQuery)
+    
     result = structured_llm.invoke([
         SystemMessage(content=system_prompt),
-        HumanMessage(content=f"""Question: {query}
-
-    Context:
-    {context}
-
-    Sources: {sources}
-
-    Answer:""")
+        HumanMessage(content=f"Rewrite this question: {query}")
     ])
-
+    
     return {
-        "answer": result.answer,
-        "sources": result.sources
+        "rewritten_query": result.rewritten_query,
+        "attempts": attempts + 1
     }
 
 def generate_node(state: MizanState):
@@ -170,28 +170,33 @@ mizan_graph.add_node('retrieve', retrieve_node)
 mizan_graph.add_node('grade', grader)
 mizan_graph.add_node('rewrite', rewrite_node)
 mizan_graph.add_node('generate', generate_node)
-mizan_graph.add_edge(START, 'retrieve')
+mizan_graph.add_node('load_profile', load_profile)
+mizan_graph.add_node('save_profile', save_profile)
+mizan_graph.add_edge(START, 'load_profile')
+mizan_graph.add_edge('load_profile', 'retrieve')
 mizan_graph.add_edge('retrieve', 'grade')
 mizan_graph.add_conditional_edges("grade", route_after_grading, ["generate", "rewrite"])
-mizan_graph.add_edge("rewrite", "retrieve")
-mizan_graph.add_edge("generate", END)
+mizan_graph.add_edge('rewrite', 'retrieve')
+mizan_graph.add_edge('generate', 'save_profile')
+mizan_graph.add_edge('save_profile', END)
 
 conn = sqlite3.connect("./mizan_memory.db", check_same_thread=False)
 memory = SqliteSaver(conn)
-graph = mizan_graph.compile(checkpointer=memory)
+in_memory_store = InMemoryStore()
 
-result = graph.invoke(
-    {"query": "ما هي حقوق العامل في إجازة الأمومة؟", "attempts": 0},
-    config={"configurable": {"thread_id": "1"}}
+graph = mizan_graph.compile(
+    checkpointer=memory,
+    store=in_memory_store
 )
-print(result["answer"])
-print("\n--- MIZAN STREAMING ---")
+
+
 for chunk in graph.stream(
-    {"query": "ما هي حقوق العامل في إجازة الأمومة؟", "attempts": 0},
-    config={"configurable": {"thread_id": "3"}},
+    {"query": "hi my name is omar what are my working rights as an 18 year old?", "attempts": 0},
+    config={"configurable": {"thread_id": "1", "user_id": "user_001"}},
     stream_mode="updates"
 ):
     node_name = next(iter(chunk.keys()))
     print(f"\n-- Node: {node_name} --")
-    if "answer" in chunk.get(node_name, {}):
-        print(chunk[node_name]["answer"])
+    node_data = chunk.get(node_name) or {}
+    if "answer" in node_data:
+        print(node_data["answer"])
