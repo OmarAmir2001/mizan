@@ -10,8 +10,8 @@ from langchain_core.messages import SystemMessage, HumanMessage
 from langgraph.graph import END, StateGraph, START
 from sentence_transformers import SentenceTransformer
 from langgraph.checkpoint.sqlite import SqliteSaver
-from langgraph.store.sqlite import SqliteStore
-from memory import load_profile, save_profile
+from langgraph.store.memory import InMemoryStore
+from model.memory import load_profile, save_profile
 
 # Load environment variables
 load_dotenv()
@@ -189,20 +189,15 @@ mizan_graph.add_edge('save_profile', END)
 conn = sqlite3.connect("./mizan_memory.db", check_same_thread=False)
 memory = SqliteSaver(conn)
 
-# Store — for long term memory  
-with SqliteStore.from_conn_string("./mizan_store.db") as store:
-    graph = mizan_graph.compile(
-        checkpointer=memory,
-        store=store
-    )
+conn = sqlite3.connect("./mizan_memory.db", check_same_thread=False)
+memory = SqliteSaver(conn)
+store = InMemoryStore()
 
-    for chunk in graph.stream(
-        {"query": "what was my job?", "attempts": 0},
-        config={"configurable": {"thread_id": "4", "user_id": "user_001"}},
-        stream_mode="updates"
-    ):
-        node_name = next(iter(chunk.keys()))
-        print(f"\n-- Node: {node_name} --")
-        node_data = chunk.get(node_name) or {}
-        if "answer" in node_data:
-            print(node_data["answer"])
+
+graph = mizan_graph.compile()
+
+#for testing in my own it dosn't work in langsmith development environment because of the way it handles imports and file paths.
+# graph = mizan_graph.compile(
+#     checkpointer=memory,
+#     store=store
+# )

@@ -3,3 +3,6 @@
 __pycache__/
 *.pyc
 .DS_Store
+*.db
+mizan_memory.db
+mizan_store.db

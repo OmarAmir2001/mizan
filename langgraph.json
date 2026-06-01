@@ -1,0 +1,10 @@
+{
+  "$schema": "https://langgra.ph/schema.json",
+  "dependencies": ["."],
+  "graphs": {
+    "mizan": "./model/graph.py:graph"
+  },
+  "env": ".env",
+  "python_version": "3.11",
+  "image_distro": "wolfi"
+}

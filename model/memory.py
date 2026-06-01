@@ -54,7 +54,7 @@ instructions_extractor = create_extractor(
 
 def load_profile(state, config: RunnableConfig, *, store: BaseStore):
     # 1. get user_id from config
-    user_id = config["configurable"]["user_id"]
+    user_id = config["configurable"].get("user_id", "anonymous")
     # load instructions
     inst_items = store.search(("MizanInstructions", user_id))
     instructions = inst_items[0].value.get("instructions", "") if inst_items else ""
@@ -72,7 +72,8 @@ def load_profile(state, config: RunnableConfig, *, store: BaseStore):
     return {"user_profile": profile, "user_instructions": instructions}
 
 def save_profile(state, config: RunnableConfig, *, store: BaseStore):
-    user_id = config["configurable"]["user_id"]
+    user_id = (config.get("configurable") or {}).get("user_id") or "anonymous"
+    user_id = user_id.strip() or "anonymous"  # handles whitespace/empty strings
 
     # --- Save User Profile ---
     namespace_profile = ("UserProfile", user_id)
