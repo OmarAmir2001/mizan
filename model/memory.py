@@ -72,48 +72,52 @@ def load_profile(state, config: RunnableConfig, *, store: BaseStore):
     return {"user_profile": profile, "user_instructions": instructions}
 
 def save_profile(state, config: RunnableConfig, *, store: BaseStore):
-    user_id = (config.get("configurable") or {}).get("user_id") or "anonymous"
-    user_id = user_id.strip() or "anonymous"  # handles whitespace/empty strings
+    try:
+        user_id = (config.get("configurable") or {}).get("user_id") or "anonymous"
+        user_id = user_id.strip() or "anonymous"
 
-    # --- Save User Profile ---
-    namespace_profile = ("UserProfile", user_id)
-    existing_items = store.search(namespace_profile)
-    existing = {item.key: item.value for item in existing_items}
+        # --- Save User Profile ---
+        namespace_profile = ("UserProfile", user_id)
+        existing_items = store.search(namespace_profile)
+        existing = {item.key: item.value for item in existing_items}
 
-    messages_profile = [
-        SystemMessage(content=TRUSTCALL_INSTRUCTION.format(time=datetime.now().isoformat())),
-        HumanMessage(content=f"Query: {state['query']}"),
-        HumanMessage(content=f"Answer given: {state.get('answer', '')}")
-    ]
+        messages_profile = [
+            SystemMessage(content=TRUSTCALL_INSTRUCTION.format(time=datetime.now().isoformat())),
+            HumanMessage(content=f"Query: {state['query']}"),
+            HumanMessage(content=f"Answer given: {state.get('answer', '')}")
+        ]
 
-    result = profile_extractor.invoke({
-        "messages": messages_profile,
-        "existing": existing
-    })
+        result = profile_extractor.invoke({
+            "messages": messages_profile,
+            "existing": existing
+        })
 
-    for r, rmeta in zip(result["responses"], result["response_metadata"]):
-        store.put(namespace_profile,
-                  rmeta.get("json_doc_id", str(uuid.uuid4())),
-                  r.model_dump(mode="json"))
+        for r, rmeta in zip(result["responses"], result["response_metadata"]):
+            store.put(namespace_profile,
+                      rmeta.get("json_doc_id", str(uuid.uuid4())),
+                      r.model_dump(mode="json"))
 
-    # --- Save Instructions ---
-    namespace_instructions = ("MizanInstructions", user_id)
-    current_inst_items = store.search(namespace_instructions)
-    existing_inst = {item.key: item.value for item in current_inst_items}
-    current_instructions = current_inst_items[0].value.get("instructions", "No instructions yet.") if current_inst_items else "No instructions yet."
+        # --- Save Instructions ---
+        namespace_instructions = ("MizanInstructions", user_id)
+        current_inst_items = store.search(namespace_instructions)
+        existing_inst = {item.key: item.value for item in current_inst_items}
+        current_instructions = current_inst_items[0].value.get("instructions", "No instructions yet.") if current_inst_items else "No instructions yet."
 
-    messages_inst = [
-        SystemMessage(content=CREATE_INSTRUCTIONS.format(current_instructions=current_instructions)),
-        HumanMessage(content=f"Query: {state['query']}"),
-        HumanMessage(content=f"Answer given: {state.get('answer', '')}")
-    ]
+        messages_inst = [
+            SystemMessage(content=CREATE_INSTRUCTIONS.format(current_instructions=current_instructions)),
+            HumanMessage(content=f"Query: {state['query']}"),
+            HumanMessage(content=f"Answer given: {state.get('answer', '')}")
+        ]
 
-    result_inst = instructions_extractor.invoke({
-        "messages": messages_inst,
-        "existing": existing_inst
-    })
+        result_inst = instructions_extractor.invoke({
+            "messages": messages_inst,
+            "existing": existing_inst
+        })
 
-    for r, rmeta in zip(result_inst["responses"], result_inst["response_metadata"]):
-        store.put(namespace_instructions,
-                  rmeta.get("json_doc_id", str(uuid.uuid4())),
-                  r.model_dump(mode="json"))
+        for r, rmeta in zip(result_inst["responses"], result_inst["response_metadata"]):
+            store.put(namespace_instructions,
+                      rmeta.get("json_doc_id", str(uuid.uuid4())),
+                      r.model_dump(mode="json"))
+
+    except Exception as e:
+        print(f"save_profile error (non-critical): {e}")

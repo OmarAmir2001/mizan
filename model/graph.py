@@ -68,7 +68,7 @@ def retrieve_node(state: MizanState):
     return {
         "retrieved_docs": results["documents"][0] if results["documents"] else [],
         "doc_scores": results["distances"][0] if results["distances"] else [],
-        "sources": results["ids"][0] if results["ids"] else [],
+        "sources": results["metadatas"][0] if results["metadatas"] else [],
         "language": language
     }
 # TODO: parallelize grading using Send API for better performance
